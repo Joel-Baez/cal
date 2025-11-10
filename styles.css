@@ -1,0 +1,841 @@
+:root {
+  --bg-gradient-start: #16003b;
+  --bg-gradient-end: #5e60ce;
+  --card-bg: rgba(255, 255, 255, 0.12);
+  --card-border: rgba(255, 255, 255, 0.25);
+  --accent: #f4a261;
+  --accent-strong: #ff6b6b;
+  --text-primary: #f7f9fc;
+  --text-secondary: #d9e2ec;
+  --shadow: 0 18px 40px rgba(0, 0, 0, 0.2);
+  --font-display: 'Poppins', 'Segoe UI', sans-serif;
+  --font-body: 'Nunito', system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background: linear-gradient(135deg, var(--bg-gradient-start), var(--bg-gradient-end));
+  color: var(--text-primary);
+  font-family: var(--font-body);
+}
+
+code {
+  font-family: 'Fira Code', monospace;
+  background: rgba(255, 255, 255, 0.12);
+  padding: 0.1rem 0.35rem;
+  border-radius: 6px;
+  color: var(--accent);
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+.hero {
+  padding: 3rem 1.5rem 2rem;
+  text-align: center;
+}
+
+.hero-content {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.hero h1 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(2.5rem, 5vw, 3.5rem);
+  margin-bottom: 1rem;
+  letter-spacing: 0.04em;
+}
+
+.hero p {
+  font-size: 1.1rem;
+  color: var(--text-secondary);
+}
+
+.container {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 2.5rem;
+  width: min(1080px, 92vw);
+  margin: 0 auto 3rem;
+}
+
+.input-panel, .result-panel {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 24px;
+  padding: 2.5rem 2rem;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+}
+
+.input-panel h2, .result-panel h2 {
+  font-family: var(--font-display);
+  margin-top: 0;
+  font-size: 1.5rem;
+  letter-spacing: 0.05em;
+}
+
+.integral-editor {
+  display: flex;
+  align-items: flex-start;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 20px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.5rem;
+  border: 1px solid transparent;
+  transition: border 0.3s ease, box-shadow 0.3s ease;
+  gap: 1rem;
+}
+
+.integral-editor:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 10px 28px rgba(244, 162, 97, 0.2);
+}
+
+.input-controls {
+  display: flex;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+}
+
+.field label,
+.field legend {
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.field input[type="text"] {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid transparent;
+  border-radius: 12px;
+  color: var(--text-primary);
+  padding: 0.55rem 0.75rem;
+  font-family: 'Fira Code', monospace;
+  font-size: 1rem;
+  transition: border 0.2s ease;
+}
+
+.field input[type="text"]:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.field.small {
+  max-width: 140px;
+}
+
+fieldset.field {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 14px;
+  padding: 0.75rem 1rem;
+  min-width: 220px;
+}
+
+fieldset.field .option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-right: 1rem;
+  font-weight: 600;
+}
+
+.integral-symbol {
+  font-size: 2.4rem;
+  margin-right: 0.75rem;
+  color: var(--accent);
+}
+
+.input-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.latex-editor {
+  width: 100%;
+  display: flex;
+  align-items: stretch;
+  min-height: 3.2rem;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 16px;
+  padding: 0.4rem;
+  transition: border 0.2s ease, box-shadow 0.2s ease;
+}
+
+.latex-editor:focus-within {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(244, 162, 97, 0.35);
+}
+
+.latex-editor.invalid {
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 2px rgba(255, 107, 107, 0.35);
+}
+
+.latex-textarea {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: 'Fira Code', monospace;
+  font-size: 1.1rem;
+  line-height: 1.5;
+  padding: 0.6rem 0.75rem;
+  resize: vertical;
+}
+
+.latex-textarea:focus {
+  outline: none;
+}
+
+.latex-textarea::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+  font-style: italic;
+}
+
+.latex-preview {
+  min-height: 2.5rem;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 0.65rem 0.85rem;
+  display: flex;
+  align-items: center;
+  font-size: 1.05rem;
+  color: var(--text-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.latex-preview .mjx-chtml {
+  font-size: 1.15rem;
+}
+
+.preview-placeholder {
+  font-style: italic;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.differential {
+  margin-left: 0.75rem;
+  font-size: 1.1rem;
+  color: var(--accent);
+  opacity: 0.85;
+}
+
+.keyboard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  margin-bottom: 1.5rem;
+}
+
+.keyboard-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.keyboard-tabs .tab {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 0.45rem 1rem;
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: transform 0.2s ease, border 0.2s ease, background 0.2s ease;
+}
+
+.keyboard-tabs .tab:hover,
+.keyboard-tabs .tab:focus {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+}
+
+.keyboard-tabs .tab.active {
+  background: var(--accent);
+  color: #0f172a;
+}
+
+.keyboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+  gap: 0.75rem;
+}
+
+.keyboard-grid .key {
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid transparent;
+  border-radius: 16px;
+  padding: 0.75rem 0.6rem;
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border 0.2s ease;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.75rem;
+  white-space: normal;
+}
+
+.keyboard-grid .key:hover,
+.keyboard-grid .key:focus {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+  box-shadow: 0 10px 18px rgba(0, 0, 0, 0.25);
+}
+
+.example-pills {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-bottom: 1.5rem;
+}
+
+.example-pills span {
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  font-weight: 700;
+}
+
+.pill-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.pill {
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid transparent;
+  color: var(--text-primary);
+  border-radius: 999px;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: transform 0.2s ease, border 0.2s ease;
+  backdrop-filter: blur(12px);
+}
+
+.pill:hover,
+.pill:focus {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+}
+
+.hint {
+  margin-top: 1.5rem;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.primary {
+  margin-top: 1.5rem;
+  background: var(--accent);
+  border: none;
+  border-radius: 16px;
+  padding: 0.9rem 1.75rem;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  color: #0f172a;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.primary:hover,
+.primary:focus {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.25);
+  outline: none;
+}
+
+.method-card {
+  background: rgba(15, 23, 42, 0.6);
+  border-radius: 20px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  padding: 1.75rem;
+  font-size: 1.05rem;
+  line-height: 1.7;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-height: 260px;
+  justify-content: flex-start;
+  overflow-wrap: anywhere;
+  max-height: clamp(320px, 65vh, 760px);
+  overflow-y: auto;
+  padding-right: 2.25rem;
+}
+
+.method-card {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(244, 162, 97, 0.6) transparent;
+}
+
+.method-card::-webkit-scrollbar {
+  width: 8px;
+}
+
+.method-card::-webkit-scrollbar-thumb {
+  background: rgba(244, 162, 97, 0.65);
+  border-radius: 999px;
+}
+
+.method-card::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.method-card h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  color: var(--accent);
+}
+
+.status {
+  background: rgba(15, 23, 42, 0.55);
+  border-radius: 16px;
+  padding: 0.9rem 1.1rem;
+  margin-bottom: 1.25rem;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: var(--text-secondary);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.status.loading {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.status.error {
+  border-color: var(--accent-strong);
+  color: var(--accent-strong);
+}
+
+.status.success {
+  border-color: rgba(52, 211, 153, 0.75);
+  color: rgba(167, 243, 208, 0.95);
+}
+
+.integral-display {
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 16px;
+  padding: 0.8rem 1rem;
+  font-size: 1.2rem;
+  margin: 0 0 1rem;
+  text-align: center;
+}
+
+.analysis-details {
+  display: grid;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.analysis-details .detail-label {
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.analysis-details .detail-value {
+  font-weight: 600;
+  font-size: 1.05rem;
+  color: var(--text-primary);
+}
+
+.method-card .badge {
+  align-self: flex-start;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.step-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.9rem;
+  counter-reset: step-counter;
+}
+
+.step-list li {
+  counter-increment: step-counter;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 1rem 1.1rem 1rem 3.25rem;
+  position: relative;
+  line-height: 1.6;
+}
+
+.step-list h4 {
+  margin: 0 0 0.35rem;
+  font-size: 1.05rem;
+  color: var(--accent);
+}
+
+.step-list p {
+  margin: 0;
+}
+
+.feature-list,
+.notes ul,
+.warnings ul {
+  margin: 0;
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+  list-style: disc;
+}
+
+.feature-list li,
+.notes li,
+.warnings li {
+  line-height: 1.5;
+}
+
+.solution-card .solution {
+  font-size: 1.2rem;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 0.85rem 1rem;
+  border-radius: 14px;
+  text-align: center;
+}
+
+.evaluation,
+.notes,
+.warnings {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  padding: 0.75rem 1rem;
+}
+
+.evaluation h4,
+.notes h4,
+.warnings h4 {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+  font-size: 1rem;
+  color: var(--accent);
+}
+
+.similar {
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 0;
+}
+
+.similar-example {
+  font-size: 1.1rem;
+  background: rgba(255, 255, 255, 0.07);
+  padding: 0.6rem 0.85rem;
+  border-radius: 12px;
+  overflow-wrap: anywhere;
+  overflow-x: auto;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+.example-card {
+  gap: 1.1rem;
+  max-height: clamp(360px, 70vh, 820px);
+  overflow-y: auto;
+}
+
+.setup {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  padding: 0.9rem 1.1rem;
+}
+
+.setup h4 {
+  margin: 0 0 0.6rem;
+  font-size: 1rem;
+  color: var(--accent);
+}
+
+.setup-grid {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.setup-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.setup-label {
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.setup-value {
+  font-family: 'STIX Two Math', 'Fira Code', monospace;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.equation-group {
+  margin-top: 0.6rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.equation {
+  margin: 0;
+  padding: 0.55rem 0.65rem;
+  border-radius: 0.75rem;
+  background: rgba(19, 23, 34, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  overflow-x: auto;
+  overflow-wrap: anywhere;
+  max-height: 13rem;
+  overflow-y: auto;
+}
+
+.step-list li::before {
+  content: counter(step-counter);
+  position: absolute;
+  left: 1.1rem;
+  top: 1rem;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #0f172a;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+}
+
+footer {
+  text-align: center;
+  padding: 2rem 1rem 3rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 600px) {
+  .input-panel, .result-panel {
+    padding: 2rem 1.5rem;
+  }
+
+  .keyboard-grid {
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  }
+
+  .input-controls {
+    flex-direction: column;
+  }
+}
+
+/* ===================== PATCH AGREGADO ===================== */
+
+/* Panel de resultados con mejor layout */
+.result-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* VISIBILIDAD: altura mínima y centrado del contenido para que no quede solo la “barrita” */
+.integral-display,
+.solution-card .solution,
+.latex-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center; /* opcional */
+  min-height: 100px;        /* clave */
+  line-height: 1.25;
+}
+
+/* Scroll cuando el contenido es largo (horizontal y vertical) */
+.integral-display,
+.solution-card .solution,
+.equation,
+.latex-preview,
+.similar-example,
+.step-list li {
+  overflow-x: auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+/* MathJax/LaTeX: evita quiebres raros */
+.integral-display .mjx-chtml,
+.solution-card .solution .mjx-chtml,
+.equation .mjx-chtml,
+.latex-preview .mjx-chtml {
+  white-space: nowrap;
+  overflow: visible;
+}
+
+/* Scrollbars con color de acento (solo donde hay overflow) */
+.integral-display::-webkit-scrollbar,
+.solution-card .solution::-webkit-scrollbar,
+.equation::-webkit-scrollbar,
+.latex-preview::-webkit-scrollbar,
+.similar-example::-webkit-scrollbar,
+.step-list li::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+.integral-display::-webkit-scrollbar-thumb,
+.solution-card .solution::-webkit-scrollbar-thumb,
+.equation::-webkit-scrollbar-thumb,
+.latex-preview::-webkit-scrollbar-thumb,
+.similar-example::-webkit-scrollbar-thumb,
+.step-list li::-webkit-scrollbar-thumb {
+  background: rgba(244, 162, 97, 0.7);
+  border-radius: 999px;
+}
+.integral-display::-webkit-scrollbar-track,
+.solution-card .solution::-webkit-scrollbar-track,
+.equation::-webkit-scrollbar-track,
+.latex-preview::-webkit-scrollbar-track,
+.similar-example::-webkit-scrollbar-track,
+.step-list li::-webkit-scrollbar-track {
+  background: transparent;
+}
+/* Firefox */
+.integral-display,
+.solution-card .solution,
+.equation,
+.latex-preview,
+.similar-example,
+.step-list li {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(244, 162, 97, 0.7) transparent;
+}
+
+/* Centrar verticalmente el número de cada paso y tamaño cómodo */
+.step-list li::before {
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
+/* Imágenes dentro del resultado seguras */
+.result-panel img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* En móvil, un poco más de área táctil para el scroll horizontal */
+@media (max-width: 600px) {
+  .integral-display,
+  .solution-card .solution,
+  .equation,
+  .latex-preview,
+  .similar-example,
+  .step-list li {
+    padding-bottom: 0.9rem;
+    
+  }
+  
+}
+/* =================== FIN PATCH AGREGADO =================== */
+
+
+/* ======== AJUSTE ESPECÍFICO: CUADROS DEL EJEMPLO GUIADO ======== */
+/* Hace más altos y legibles los 2 recuadros: "Integral modelo" y "Resultado esperado" */
+#exampleCard p.similar-example {
+  display: flex !important;
+  align-items: center !important;
+  min-height: 120px !important;     /* ← sube a 150px si los quieres aún más grandes */
+  padding: 1rem 1.25rem !important;
+  font-size: 1.35rem !important;
+  line-height: 1.35 !important;
+  border-radius: 16px !important;
+
+  /* mantiene scroll si se desborda */
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* MathJax dentro de esos cuadros */
+#exampleCard p.similar-example mjx-container {
+  display: block !important;
+  margin: 0 !important;
+}
+#exampleCard p.similar-example .mjx-chtml {
+  font-size: 1.35rem !important;
+  white-space: nowrap; /* una línea + scroll horizontal si hace falta */
+}
+
+/* (Opcional) mejorar también la vista previa superior */
+#latexPreview {
+  min-height: 100px !important;
+  padding: 1rem 1.25rem !important;
+  font-size: 1.3rem !important;
+  line-height: 1.3 !important;
+}
+#latexPreview mjx-container { display: block !important; margin: 0 !important; }
+#latexPreview .mjx-chtml { font-size: 1.3rem !important; }
+
+@media (max-width: 600px) {
+  #exampleCard p.similar-example {
+    min-height: 95px !important;
+    font-size: 1.2rem !important;
+    padding: 0.85rem 1rem !important;
+  }
+  #exampleCard p.similar-example .mjx-chtml { font-size: 1.2rem !important; }
+  #latexPreview { min-height: 88px !important; font-size: 1.2rem !important; }
+  #latexPreview .mjx-chtml { font-size: 1.2rem !important; }
+}
