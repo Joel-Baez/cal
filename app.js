@@ -8,6 +8,7 @@ const statusMessage = document.getElementById('statusMessage');
 const analysisCard = document.getElementById('analysisCard');
 const methodSuggestion = document.getElementById('methodSuggestion');
 const exampleCard = document.getElementById('exampleCard');
+const userCard = document.getElementById('userCard'); // Card para la integral del usuario
 const keyboardTabs = document.getElementById('keyboardTabs');
 const keyboardGrid = document.getElementById('keyboardGrid');
 const examplePills = document.querySelectorAll('.pill');
@@ -57,53 +58,11 @@ const KEYBOARD_GROUPS = [
       { label: 'sec', latex: `\\sec\\left(${P}\\right)` },
       { label: 'csc', latex: `\\csc\\left(${P}\\right)` },
       { label: 'cot', latex: `\\cot\\left(${P}\\right)` },
-      { label: 'sinh', latex: `\\sinh\\left(${P}\\right)` },
-      { label: 'cosh', latex: `\\cosh\\left(${P}\\right)` },
-      { label: 'tanh', latex: `\\tanh\\left(${P}\\right)` },
       { label: 'arcsin', latex: `\\arcsin\\left(${P}\\right)` },
       { label: 'arccos', latex: `\\arccos\\left(${P}\\right)` },
       { label: 'arctan', latex: `\\arctan\\left(${P}\\right)` }
     ]
   },
-  {
-    id: 'estructuras-trig',
-    label: 'Identidades',
-    keys: [
-      { label: '√(a²−x²)', latex: `\\sqrt{${P}^{2}-x^{2}}` },
-      { label: '√(a²+x²)', latex: `\\sqrt{${P}^{2}+x^{2}}` },
-      { label: '√(x²−a²)', latex: `\\sqrt{x^{2}-${P}^{2}}` },
-      { label: 'sin²+cos²', latex: `\\sin^{2}(${P})+\\cos^{2}(${P})` },
-      { label: '1+tan²', latex: `1+\\tan^{2}(${P})` },
-      { label: 'sec²', latex: `\\sec^{2}(${P})` }
-    ]
-  },
-  {
-    id: 'fracciones',
-    label: 'Fracciones parciales',
-    keys: [
-      { label: 'A/(x-a)', latex: `\\frac{A}{x-${P}}` },
-      { label: 'B/(x+a)', latex: `\\frac{B}{x+${P}}` },
-      { label: '(Cx+D)/(x²+a²)', latex: `\\frac{Cx+D}{x^{2}+${P}^{2}}` },
-      { label: '(Ax+B)/(x-a)²', latex: `\\frac{Ax+B}{(x-${P})^{2}}` },
-      { label: '1/(x(x+a))', latex: `\\frac{1}{x\\left(x+${P}\\right)}` },
-      { label: 'P(x)/Q(x)', latex: `\\frac{${P}}{${P}}` }
-    ]
-  },
-  {
-    id: 'metodos',
-    label: 'Métodos',
-    keys: [
-      { label: 'u(x)=', latex: `u(x)=${P}` },
-      { label: 'du=', latex: `du=${P}\\,d${P}` },
-      { label: 'v(x)=', latex: `v(x)=${P}` },
-      { label: 'dv=', latex: `dv=${P}\\,d${P}` },
-      { label: '∫u dv', latex: '\\int u\\,dv' },
-      { label: '∫f(u)du', latex: '\\int f(u)\\,du' },
-      { label: 'u→x', latex: `x=${P}(u)` },
-      { label: 'θ→x', latex: `x=${P}(\\theta)` },
-      { label: 'dx=', latex: `d${P}=${P}` }
-    ]
-  }
 ];
 
 const METHOD_TO_GROUP = {
@@ -165,9 +124,10 @@ const updatePreview = () => {
 const handleLatexInput = () => {
   mathfieldHost?.classList.remove('invalid');
   updatePreview();
-  setStatus(getLatexValue()
-    ? 'Expresión actualizada. Pulsa «Sugerir método».'
-    : 'Escribe un integrando para comenzar.',
+  setStatus(
+    getLatexValue()
+      ? 'Expresión actualizada. Pulsa «Sugerir método».'
+      : 'Escribe un integrando para comenzar.',
     'idle'
   );
 };
@@ -276,6 +236,8 @@ examplePills.forEach((pill) => {
 });
 
 const renderAnalysis = (analysis) => {
+  if (!analysisCard) return;
+
   const {
     latex_integral: latexIntegral = '',
     variable = 'x',
@@ -303,6 +265,8 @@ const renderAnalysis = (analysis) => {
 };
 
 const renderMethod = (method) => {
+  if (!methodSuggestion || !exampleCard) return;
+
   if (!method) {
     methodSuggestion.innerHTML = `
       <h3>Método sugerido</h3>
@@ -369,6 +333,18 @@ const renderMethod = (method) => {
   highlightKeyboardGroup(key);
 };
 
+const renderUserResolution = (user) => {
+  if (!userCard) return;
+
+  // La app solo muestra ejemplos modelo, así que usamos este texto fijo
+  userCard.innerHTML = `
+    <h3>Resolución modelo</h3>
+    <p>La explicación paso a paso se muestra en el <strong>ejemplo guiado</strong> de arriba.</p>
+    <p>Úsalo como referencia para resolver tu integral con el mismo método.</p>
+  `;
+};
+
+
 const highlightKeyboardGroup = (methodKey) => {
   const group = METHOD_TO_GROUP[methodKey] || 'basico';
   if (activeGroup !== group) activeGroup = group;
@@ -420,11 +396,15 @@ form.addEventListener('submit', async (event) => {
     if (data.status !== 'ok') throw new Error(data.error || 'No se pudo procesar la integral.');
     renderAnalysis(data.analysis);
     renderMethod(data.method);
-    setStatus('Análisis completado. Revisa el método sugerido y el ejemplo.', 'success');
+    renderUserResolution(data.user); // si no existe data.user, no pasa nada con la versión segura
+    setStatus('Análisis completado. Revisa el método sugerido, el ejemplo y la resolución de tu integral.', 'success');
   } catch (error) {
     console.error(error);
     setStatus(error.message || 'Ocurrió un error al procesar la integral.', 'error');
     renderMethod(null);
+    if (userCard) {
+      userCard.innerHTML = '';
+    }
   } finally {
     retypeset();
   }

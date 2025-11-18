@@ -42,7 +42,11 @@ from sympy import (
     tan,
     tanh,
     Integer,
+    Abs,
+    together,  # 👈 IMPORTANTE para fracciones parciales
 )
+
+
 from sympy.core.function import AppliedUndef
 from sympy.core.sympify import SympifyError
 from sympy.parsing.sympy_parser import (
@@ -153,17 +157,47 @@ def perturb_constants(expr):
 def clean_latex(text: str) -> str:
     if not isinstance(text, str):
         text = str(text)
+
     cleaned = text
+
+    # Quitar \left y \right que ensucian un poco
     replacements = [
         (r'\\left', ''),
         (r'\\right', ''),
     ]
     for old, new in replacements:
         cleaned = cleaned.replace(old, new)
-    cleaned = re.sub(r'\\operatorname\{([A-Za-z]+)\}', lambda match: f"\\{match.group(1)}", cleaned)
+
+    # SymPy suele sacar \operatorname{asin}, \operatorname{acos}, etc.
+    # Los convertimos a comandos "normales"
+    cleaned = re.sub(
+        r'\\operatorname\{([A-Za-z]+)\}',
+        lambda m: "\\" + m.group(1),
+        cleaned,
+    )
+
+    # Mapear funciones que MathJax NO conoce (\asin, \acos, \atan)
+    # a las que sí conoce (\arcsin, \arccos, \arctan).
+    func_map = {
+        r'\asin': r'\arcsin',
+        r'\acos': r'\arccos',
+        r'\atan': r'\arctan',
+        # por si acaso algún día salen hiperbólicas inversas:
+        r'\asinh': r'\operatorname{arsinh}',
+        r'\acosh': r'\operatorname{arcosh}',
+        r'\atanh': r'\operatorname{artanh}',
+    }
+    for bad, good in func_map.items():
+        cleaned = cleaned.replace(bad, good)
+
+    # log → ln
     cleaned = re.sub(r'\\log(?!_)', r'\\ln', cleaned)
+
+    # d en modo texto
     cleaned = cleaned.replace(r'\mathrm{d}', 'd')
+
     return cleaned
+
 
 
 def latexize(obj) -> str:
@@ -177,14 +211,39 @@ def latexize(obj) -> str:
 
 
 def make_integral_latex(expr, variable: Symbol) -> str:
-    return rf"\int {latexize(expr)}\\,d{latexize(variable)}"
+    return rf"\int {latexize(expr)}\,d{latexize(variable)}"
 
 
 def format_antiderivative(expr, variable: Symbol) -> str:
+    """
+    Formatea la antiderivada en LaTeX y añade + c.
+    Además, corrige algunas formas raras que devuelve SymPy,
+    como log(tan(x)**2 + 1)/2 en integrales de tan(x).
+    """
     constant_suffix = ' + c'
+
+    # Si SymPy no pudo integrar y dejó un Integral, lo devolvemos tal cual
     if isinstance(expr, Integral):
         return latexize(expr) + constant_suffix
-    return f"{latexize(expr)}{constant_suffix}"
+
+    from sympy import log, tan, sec, Wild, simplify, expand
+
+    # --- Corrección específica: ∫ tan(u) dx ---
+    u = Wild('u')
+    match = expr.match(log(tan(u)**2 + 1) / 2)
+    if match:
+        # log(tan(u)^2 + 1)/2  ->  log(sec(u))
+        expr = log(sec(match[u]))
+
+    # 🔧 NUEVO: para polinomios en la variable principal, usamos expand
+    # para evitar que SymPy los devuelva factorizados.
+    poly = expr.as_poly(variable)
+    if poly is not None:
+        expr_to_show = expand(expr)
+    else:
+        expr_to_show = simplify(expr)
+
+    return f"{latexize(expr_to_show)}{constant_suffix}"
 
 
 def linearize_argument(arg, var: Symbol):
@@ -233,14 +292,14 @@ def simplify_parts_component(expr, var: Symbol):
 
 def format_differential(name: str, expr, variable: Symbol) -> str:
     simplified = simplify(expr)
-    return rf"{name} = {latexize(simplified)}\\,d{latexize(variable)}"
+    return rf"{name} = {latexize(simplified)}\,d{latexize(variable)}"
 
 
 def format_dx_from_du(variable: Symbol, derivative) -> str:
     simplified = simplify(derivative)
     if simplify(simplified - 1) == 0:
         return rf"d{latexize(variable)} = du"
-    return rf"d{latexize(variable)} = \\frac{{du}}{{{latexize(simplified)}}}"
+    return rf"d{latexize(variable)} = \frac{{du}}{{{latexize(simplified)}}}"
 
 
 def build_step(title: str, description: str, equations: List[str] | None = None) -> Dict[str, object]:
@@ -267,33 +326,156 @@ def describe_trig_substitution(inner_expr, var: Symbol):
         if match and match.get(a) not in (None, 0) and match.get(k) not in (None, 0):
             a_val = simplify(abs(match[a]))
             b_val = simplify(abs(match[k]))
-            return {'pattern': pattern_label, 'a': a_val, 'b': b_val}
+            return {'pattern': pattern_label, 'a': a_val, 'b': b_val, 'inner': inner}
+    return None
+
+
+def find_trig_pattern(expr, var: Symbol):
+    """
+    Busca patrones de sustitución trigonométrica tanto en sqrt(...)
+    como en potencias con exponente 1/2 o -1/2.
+    """
+    candidates = []
+
+    # sqrt(...)
+    for term in expr.atoms(sqrt):
+        if term.has(var):
+            candidates.append(term.args[0])
+
+    # (algo)^(1/2) o (algo)^(-1/2)
+    for term in expr.atoms(Pow):
+        if not term.has(var):
+            continue
+        if term.exp == Rational(1, 2) or term.exp == Rational(-1, 2):
+            candidates.append(term.base)
+
+    for inner in candidates:
+        info = describe_trig_substitution(inner, var)
+        if info:
+            return info
     return None
 
 
 def generate_substitution_example(expr, var: Symbol):
-    # Caso típico racional: (g'(x))/g(x) → log
+    """
+    Genera un ejemplo por sustitución parecido al integrando del usuario.
+
+    - Si el integrando es racional (cociente de polinomios), usa el patrón
+      (g'(x))/g(x) → log.
+    - Si el integrando contiene funciones compuestas (exp(g(x)), sin(g(x)), ...),
+      genera un ejemplo con LA MISMA función exterior (exp, sin, cos, etc.)
+      y un polinomio interior parecido.
+    - Si nada de eso aplica, usa un ejemplo genérico.
+    """
+    """
+    Genera un ejemplo por sustitución parecido al integrando del usuario.
+    """
+
+    x = var
+
+    # --- 0) Caso especial: k/(a + x^(1/n)) con n = 2 o 3 (raíces) ---
+    radical_pows = [
+        p for p in expr.atoms(Pow)
+        if p.base == x and p.exp in (Rational(1, 2), Rational(1, 3))
+    ]
+    if radical_pows:
+        root = radical_pows[0]
+        K = Wild('K', exclude=[x])
+        a = Wild('a', exclude=[x])
+
+        simplified = simplify(expr)
+        m = simplified.match(K / (a + root)) or simplified.match(K / (root + a))
+        if m and m.get(K) is not None and m.get(a) is not None:
+            K_val = m[K]
+            a_val = m[a]
+
+            # Constantes "parecidas" pero no idénticas (si son enteras)
+            K_like = K_val
+            a_like = a_val
+            if isinstance(K_val, Integer):
+                K_like = Integer(_perturb_int(int(K_val)))
+            if isinstance(a_val, Integer):
+                a_like = Integer(_perturb_int(int(a_val)))
+
+            example_integrand = simplify(K_like / (a_like + root))
+            antiderivative = integrate(example_integrand, x)
+
+            # x = t^n  con n = 2 (raíz cuadrada) o 3 (raíz cúbica)
+            n = int(1 / root.exp)   # 2 para 1/2, 3 para 1/3
+            t = Symbol('t')
+            x_sub = t**n
+            dx_sub = diff(x_sub, t)
+            integrand_t = simplify(example_integrand.subs(x, x_sub) * dx_sub)
+
+            substitution_table = (
+                r"\begin{aligned}"
+                rf"x &= t^{n}\\"
+                rf"dx &= {latexize(dx_sub)}\,dt\\"
+                rf"x^{{1/{n}}} &= t"
+                r"\end{aligned}"
+            )
+
+            setup = [
+                {"label": "Sustitución de raíz", "value": substitution_table},
+                {"label": "Integral en la nueva variable", "value": make_integral_latex(integrand_t, t)},
+            ]
+
+            steps = [
+                build_step(
+                    "1) Detectamos la raíz en el denominador",
+                    "Al tener una raíz de la variable en el denominador, conviene eliminarla con una sustitución del tipo $x = t^n$.",
+                    [make_integral_latex(example_integrand, x)],
+                ),
+                build_step(
+                    "2) Planteamos el cambio de variable",
+                    f"Tomamos $x = t^{n}$ para que $x^{{1/{n}}} = t$ y el denominador quede lineal en la nueva variable.",
+                    [substitution_table],
+                ),
+                build_step(
+                    "3) Reescribimos la integral en $t$",
+                    "Sustituimos $x$ y $dx$ en la integral original y simplificamos el integrando.",
+                    [make_integral_latex(integrand_t, t)],
+                ),
+                build_step(
+                    "4) Integramos y volvemos a $x$",
+                    "Integramos en $t$ y volvemos a expresar el resultado en función de $x$.",
+                    [format_antiderivative(antiderivative, x)],
+                ),
+            ]
+
+            return {
+                "example_integral": make_integral_latex(example_integrand, x),
+                "example_solution": format_antiderivative(antiderivative, x),
+                "setup": setup,
+                "steps": steps,
+            }
+
+    # 1) Caso típico racional: (g'(x))/g(x) → log
     if expr.is_rational_function(var) and not expr.is_polynomial(var):
         _, denominator = fraction(expr)
         inner = simplify(denominator)
         derived = simplify(diff(inner, var))
         if derived != 0:
-            shifted_inner = simplify(inner + 1)  # parecido, no igual
+            # parecido pero no idéntico al denominador original
+            shifted_inner = simplify(inner + 1)
             example_integrand = simplify(derived / shifted_inner)
             antiderivative = integrate(example_integrand, var)
+
             u_symbol = Symbol('u')
             reduced_integrand = 1 / u_symbol
             reduced_antiderivative = integrate(reduced_integrand, u_symbol)
+
             du_value = format_differential('du', derived, var)
             dx_value = format_dx_from_du(var, derived)
             inner_tex = latexize(shifted_inner)
             derived_tex = latexize(derived)
             reduced_integrand_tex = latexize(reduced_integrand)
+
             setup = [
                 {'label': 'u(x)', 'value': rf"u(x) = {inner_tex}"},
                 {'label': 'du', 'value': du_value},
                 {'label': 'dx', 'value': dx_value},
-                {'label': 'Integral en u', 'value': rf"\\int {reduced_integrand_tex}\\,du"},
+                {'label': 'Integral en u', 'value': rf"\int {reduced_integrand_tex}\,du"},
             ]
             steps = [
                 build_step(
@@ -313,7 +495,7 @@ def generate_substitution_example(expr, var: Symbol):
                 build_step(
                     '3) Integramos en términos de $u$',
                     'La integral resultante es elemental y conduce a un logaritmo.',
-                    [rf"\\int {reduced_integrand_tex}\\,du = {format_antiderivative(reduced_antiderivative, u_symbol)}"],
+                    [rf"\int {reduced_integrand_tex}\,du = {format_antiderivative(reduced_antiderivative, u_symbol)}"],
                 ),
                 build_step(
                     '4) Sustituimos de vuelta',
@@ -328,27 +510,204 @@ def generate_substitution_example(expr, var: Symbol):
                 'steps': steps,
             }
 
-    # Fallback genérico con ligera perturbación del interior
+    # 2) Caso no racional: imitar la MISMA función compuesta del usuario
+    composite_candidates = list(
+        expr.atoms(exp, log, sin, cos, tan, cot, sec, csc, sinh, cosh, tanh, sqrt)
+    )
+    for func_expr in composite_candidates:
+        if not func_expr.args:
+            continue
+        inner = func_expr.args[0]
+        if not inner.has(var):
+            continue
+
+        # derivada del interior
+        derived = simplify(diff(inner, var))
+        if derived == 0:
+            continue
+
+        # interior "parecido" pero perturbado
+        inner_like = simplify(perturb_constants(inner) + 1)
+        derived_like = simplify(diff(inner_like, var))
+
+        if derived_like == 0:
+            continue
+
+        outer = func_expr.func  # exp, sin, cos, ...
+
+        example_integrand = simplify(derived_like * outer(inner_like))
+        antiderivative = integrate(example_integrand, var)
+
+        u_symbol = Symbol('u')
+        du_value = format_differential('du', derived_like, var)
+        dx_value = format_dx_from_du(var, derived_like)
+        reduced_integrand = outer(u_symbol)
+        reduced_integral = integrate(reduced_integrand, u_symbol)
+
+        inner_tex = latexize(inner_like)
+        derived_tex = latexize(derived_like)
+        reduced_integrand_tex = latexize(reduced_integrand)
+        reduced_integral_tex = format_antiderivative(reduced_integral, u_symbol)
+
+        setup = [
+            {'label': 'u(x)', 'value': rf"u(x) = {inner_tex}"},
+            {'label': 'du', 'value': du_value},
+            {'label': 'dx', 'value': dx_value},
+            {'label': 'Integral en u', 'value': rf"\int {reduced_integrand_tex}\,du"},
+        ]
+        steps = [
+            build_step(
+                '1) Identificamos la función compuesta',
+                (
+                    'Notamos que la parte interior '
+                    f"${inner_tex}$ aparece junto con su derivada ${derived_tex}$ "
+                    'multiplicando a la función exterior.'
+                ),
+                [make_integral_latex(example_integrand, var)],
+            ),
+            build_step(
+                '2) Declaramos $u(x)$ y el diferencial',
+                'Elegimos una variable auxiliar que simplifique la composición.',
+                [rf"u(x) = {inner_tex}", du_value, dx_value],
+            ),
+            build_step(
+                '3) Integramos en la variable auxiliar',
+                'Al sustituir, obtenemos una integral elemental en $u$.',
+                [rf"\int {reduced_integrand_tex}\,du = {reduced_integral_tex}"],
+            ),
+            build_step(
+                '4) Regresamos a la variable original',
+                'Reemplazamos $u$ por la expresión inicial para concluir la antiderivada.',
+                [format_antiderivative(antiderivative, var)],
+            ),
+        ]
+        return {
+            'example_integral': make_integral_latex(example_integrand, var),
+            'example_solution': format_antiderivative(antiderivative, var),
+            'setup': setup,
+            'steps': steps,
+        }
+            # 3) Caso potencia algebraica: g'(x)*(g(x))^n
+    power_candidates = [term for term in expr.atoms(Pow) if term.has(var)]
+    for pow_expr in power_candidates:
+        base = pow_expr.base
+        if not base.has(var):
+            continue
+
+        der = simplify(diff(base, var))
+        if der == 0:
+            continue
+
+        try:
+            ratio = simplify(expr / der)
+        except Exception:
+            continue
+
+        C = Wild('C', exclude=[base])
+        p = Wild('p')
+
+        match = ratio.match(C * base**p)
+        if not match:
+            continue
+
+        C_val = match[C]
+        if C_val is None:
+            continue
+
+        # C_val constante respecto a la variable
+        try:
+            if hasattr(C_val, "is_constant") and not C_val.is_constant(var):
+                continue
+        except Exception:
+            if var in C_val.free_symbols:
+                continue
+
+        exponent = match[p]
+        inner = base
+
+        # Hacemos una versión "parecida" de g(x) perturbando constantes
+        inner_like = simplify(perturb_constants(inner) + 1)
+        der_like = simplify(diff(inner_like, var))
+
+        # Integrando de ejemplo: g'(x)*(g(x))^n (mismo patrón que el usuario)
+        example_integrand = simplify(der_like * inner_like**exponent)
+        antiderivative = integrate(example_integrand, var)
+
+        u_symbol = Symbol('u')
+        du_value = format_differential('du', der_like, var)
+        dx_value = format_dx_from_du(var, der_like)
+        reduced_integrand = u_symbol**exponent
+        reduced_integral = integrate(reduced_integrand, u_symbol)
+
+        inner_tex = latexize(inner_like)
+        reduced_integrand_tex = latexize(reduced_integrand)
+        reduced_integral_tex = format_antiderivative(reduced_integral, u_symbol)
+
+        setup = [
+            {'label': 'u(x)', 'value': rf"u(x) = {inner_tex}"},
+            {'label': 'du', 'value': du_value},
+            {'label': 'dx', 'value': dx_value},
+            {'label': 'Integral en u', 'value': rf"\int {reduced_integrand_tex}\,du"},
+        ]
+
+        steps = [
+            build_step(
+                '1) Identificamos la potencia compuesta',
+                (
+                    'Reconocemos una expresión del tipo $g(x)^n$ acompañada de '
+                    'su derivada $g\'(x)$, lo que sugiere una sustitución directa.'
+                ),
+                [make_integral_latex(example_integrand, var)],
+            ),
+            build_step(
+                '2) Declaramos $u(x)$ y el diferencial',
+                'Tomamos como variable auxiliar la base de la potencia compuesta.',
+                [rf"u(x) = {inner_tex}", du_value, dx_value],
+            ),
+            build_step(
+                '3) Integramos en términos de $u$',
+                'La integral se convierte en una potencia de $u$ fácil de integrar.',
+                [rf"\int {reduced_integrand_tex}\,du = {reduced_integral_tex}"],
+            ),
+            build_step(
+                '4) Volvemos a la variable original',
+                'Reemplazamos $u$ por la expresión inicial para obtener la antiderivada.',
+                [format_antiderivative(antiderivative, var)],
+            ),
+        ]
+
+        return {
+            'example_integral': make_integral_latex(example_integrand, var),
+            'example_solution': format_antiderivative(antiderivative, var),
+            'setup': setup,
+            'steps': steps,
+        }
+
+
+    # 3) Fallback genérico si todo lo anterior falla
     inner = var**3 + var
     outer = sin
     derived = diff(inner, var)
     shifted_inner = simplify(perturb_constants(inner) + 1)
     example_integrand = simplify(derived * outer(shifted_inner))
     antiderivative = integrate(example_integrand, var)
+
     u_symbol = Symbol('u')
     du_value = format_differential('du', derived, var)
     dx_value = format_dx_from_du(var, derived)
     reduced_integrand = outer(u_symbol)
     reduced_integral = integrate(reduced_integrand, u_symbol)
+
     inner_tex = latexize(shifted_inner)
     derived_tex = latexize(derived)
     reduced_integrand_tex = latexize(reduced_integrand)
     reduced_integral_tex = format_antiderivative(reduced_integral, u_symbol)
+
     setup = [
         {'label': 'u(x)', 'value': rf"u(x) = {inner_tex}"},
         {'label': 'du', 'value': du_value},
         {'label': 'dx', 'value': dx_value},
-        {'label': 'Integral en u', 'value': rf"\\int {reduced_integrand_tex}\\,du"},
+        {'label': 'Integral en u', 'value': rf"\int {reduced_integrand_tex}\,du"},
     ]
     steps = [
         build_step(
@@ -368,7 +727,7 @@ def generate_substitution_example(expr, var: Symbol):
         build_step(
             '3) Integramos en la variable auxiliar',
             'Al sustituir, obtenemos una integral elemental en $u$.',
-            [rf"\\int {reduced_integrand_tex}\\,du = {reduced_integral_tex}"],
+            [rf"\int {reduced_integrand_tex}\,du = {reduced_integral_tex}"],
         ),
         build_step(
             '4) Regresamos a la variable original',
@@ -383,22 +742,38 @@ def generate_substitution_example(expr, var: Symbol):
         'steps': steps,
     }
 
-
 def split_product(expr, var: Symbol):
+    """
+    Separa el producto en (polinomio en x) * (resto).
+
+    Evita elegir constantes como polinomio; busca grado >= 1.
+    """
     factors = list(expr.as_ordered_factors()) if expr.is_Mul else [expr]
     polynomial = None
     other = None
+
+    # Buscar factor polinómico de grado >= 1
     for factor_candidate in factors:
         poly = factor_candidate.as_poly(var)
-        if poly is not None:
+        if poly is not None and poly.degree() >= 1:
             polynomial = factor_candidate
             break
+
     if polynomial is None:
+        # Si no encontramos, tomamos el primer factor que tenga la variable
+        for factor_candidate in factors:
+            if factor_candidate.has(var):
+                polynomial = factor_candidate
+                break
+
+    if polynomial is None:
+        # Fallback: usamos var como polinomio artificial
         polynomial = var
         other = expr / var
     else:
         remaining = simplify(expr / polynomial)
         other = remaining
+
     return polynomial, other
 
 
@@ -455,7 +830,7 @@ def generate_parts_example(expr, var: Symbol):
             '3) Aplicamos la fórmula',
             r'Utilizamos $\int u\,dv = uv - \int v\,du$ y simplificamos la integral restante.',
             [r"\int u\,dv = uv - \int v\,du",
-             rf"\int {product_integral_tex}\\,d{var_tex} = {u_tex}{v_tex} - \int {v_tex}\\,{du_tex}\\,d{var_tex}"],
+             rf"\int {product_integral_tex}\,d{var_tex} = {u_tex}{v_tex} - \int {v_tex}\,{du_tex}\,d{var_tex}"],
         ),
         build_step(
             '4) Presentamos la primitiva final',
@@ -472,309 +847,449 @@ def generate_parts_example(expr, var: Symbol):
 
 
 def generate_trig_example(expr, var: Symbol):
-    radicands = [term.args[0] for term in expr.atoms(sqrt) if term.has(var)]
-    inner = radicands[0] if radicands else var**2 + 1
-    description = describe_trig_substitution(inner, var)
-    a = description['a'] if description else 1
-    b = description['b'] if description else 1
-    pattern = description['pattern'] if description else 'sqrt(a^2 + (bx)^2)'
-    theta = Symbol('theta')
+    """
+    Genera un ejemplo de sustitución trigonométrica CLÁSICO según el tipo de raíz
+    que aparezca en el integrando del usuario.
 
-    # Perturbar levemente a y/o b para no copiar el caso exacto del usuario
-    try:
-        if hasattr(a, 'is_integer') and a.is_integer:
-            a = Integer(_perturb_int(int(a)))
-        if hasattr(b, 'is_integer') and b.is_integer:
-            b = Integer(_perturb_int(int(b)))
-    except Exception:
-        pass
+    Detecta el signo del polinomio cuadrático bajo la raíz:
 
-    if pattern == 'sqrt(a^2 - (bx)^2)':
-        example_integrand = 1 / sqrt(a**2 - (b * var) ** 2)
-        substitution_expr = (a / b) * sin(theta)
-        inverse = latexize(asin(var * b / a))
-    elif pattern == 'sqrt((bx)^2 - a^2)':
-        example_integrand = sqrt((b * var) ** 2 - a**2) / var
-        substitution_expr = (a / b) * sec(theta)
-        inverse = latexize(acos(a / (b * var)))
-    else:
-        example_integrand = 1 / sqrt(a**2 + (b * var) ** 2)
-        substitution_expr = (a / b) * tan(theta)
-        inverse = latexize(atan(var * b / a))
+      √(a² - x²)    -> caso seno      -> ejemplo: ∫ 1/√(9 - x²) dx      -> arcsin(x/3)
+      √(a² + x²)    -> caso tangente  -> ejemplo: ∫ 1/√(4 + 9x²) dx     -> (1/3) ln|3x + √(4+9x²)|
+      √(x² - a²)    -> caso secante   -> ejemplo: ∫ 1/√(9x² - 4) dx     -> (1/3) ln|3x + √(9x²-4)|
+    """
 
-    dx_theta = diff(substitution_expr, theta)
-    var_tex = latexize(var)
+    from sympy import asin, log, sqrt, sec, tan
+
+    x = var
+    theta = Symbol("theta")
+    var_tex = latexize(x)
     theta_tex = latexize(theta)
+
+    # ===================== 1) Buscamos "la" raíz cuadrada del integrando =====================
+    inner = None
+
+    # Raíces como sqrt(...)
+    for term in expr.atoms(sqrt):
+        if term.has(x):
+            inner = term.args[0]
+            break
+
+    # O potencias 1/2, -1/2: (algo)^(1/2)
+    if inner is None:
+        for term in expr.atoms(Pow):
+            if term.has(x) and term.exp in (Rational(1, 2), Rational(-1, 2)):
+                inner = term.base
+                break
+
+    # Si no encontramos nada, usamos el caso tangente por defecto
+    case = "tangent"
+
+    if inner is not None:
+        inner = simplify(inner)
+        poly = inner.as_poly(x)
+        if poly is not None and poly.degree() == 2:
+            A = poly.LC()        # coeficiente de x^2
+            C = poly.eval(0)     # término independiente
+
+            # Solo intentamos clasificar si A y C son numéricos
+            if A.is_number and C.is_number:
+                # Forma ~ a^2 - x^2   -> A < 0, C > 0
+                if A.evalf() < 0 and C.evalf() > 0:
+                    case = "sine"
+                # Forma ~ a^2 + x^2   -> A > 0, C > 0
+                elif A.evalf() > 0 and C.evalf() > 0:
+                    case = "tangent"
+                # Forma ~ x^2 - a^2   -> A > 0, C < 0
+                elif A.evalf() > 0 and C.evalf() < 0:
+                    case = "secant"
+                else:
+                    case = "tangent"
+
+    # ===================== 2) Definimos el EJEMPLO MODELO según el caso =====================
+
+    if case == "sine":
+        # ∫ 1 / √(9 - x²) dx  ---> arcsin(x/3)
+        example_integrand = 1 / sqrt(9 - x**2)
+
+        # Sustitución clásica:  x = 3 sinθ
+        substitution_expr = 3 * sin(theta)
+        dx_theta_expr = 3 * cos(theta)
+        root_theta_expr = 3 * cos(theta)
+
+        classical_table = (
+            r"\begin{aligned}"
+            r"x &= 3\sin\theta\\"
+            r"dx &= 3\cos\theta\,d\theta\\"
+            r"\sqrt{9-x^2} &= 3\cos\theta"
+            r"\end{aligned}"
+        )
+
+        # Integral en θ, escrita a mano:
+        # ∫ 1/√(9-x²) dx = ∫ 3cosθ / √(9-9sin²θ) dθ = ∫ 1 dθ = θ
+        theta_integral_latex = (
+            r"\int \frac{1}{\sqrt{9-x^2}}\,dx"
+            r" = \int \frac{3\cos\theta}{\sqrt{9-9\sin^2\theta}}\,d\theta"
+            r" = \int 1\,d\theta = \theta"
+        )
+
+        antiderivative_expr = asin(x / 3)
+
+    elif case == "secant":
+        # ∫ 1 / √(9x² - 4) dx  ---> (1/3) ln| 3x + √(9x²-4) |
+        example_integrand = 1 / sqrt(9 * x**2 - 4)
+
+        # Modelo: 9x²-4 = (3x)² - 2²  -> x = (2/3) secθ
+        substitution_expr = (2 / 3) * sec(theta)
+        dx_theta_expr = (2 / 3) * sec(theta) * tan(theta)
+        root_theta_expr = 2 * tan(theta)
+
+        classical_table = (
+            r"\begin{aligned}"
+            r"x &= \frac{2}{3}\sec\theta\\"
+            r"dx &= \frac{2}{3}\sec\theta\tan\theta\,d\theta\\"
+            r"\sqrt{9x^2-4} &= 2\tan\theta"
+            r"\end{aligned}"
+        )
+
+        # ∫ 1/√(9x²-4) dx = (1/3) ∫ secθ dθ
+        theta_integral_latex = (
+            r"\int \frac{1}{\sqrt{9x^2-4}}\,dx"
+            r" = \int \frac{\tfrac{2}{3}\sec\theta\tan\theta}{2\tan\theta}\,d\theta"
+            r" = \int \frac{1}{3}\sec\theta\,d\theta"
+            r" = \frac{1}{3}\ln\left|\sec\theta+\tan\theta\right|"
+        )
+
+        antiderivative_expr = log(3 * x + sqrt(9 * x**2 - 4)) / 3
+
+    else:  # case == "tangent"
+        # ∫ 1 / √(4 + 9x²) dx  ---> (1/3) ln| 3x + √(4+9x²) |
+        example_integrand = 1 / sqrt(4 + 9 * x**2)
+
+        # 4+9x² = 2² + (3x)²  -> x = (2/3) tanθ
+        substitution_expr = (2 / 3) * tan(theta)
+        dx_theta_expr = (2 / 3) * sec(theta)**2
+        root_theta_expr = 2 * sec(theta)
+
+        classical_table = (
+            r"\begin{aligned}"
+            r"x &= \frac{2}{3}\tan\theta\\"
+            r"dx &= \frac{2}{3}\sec^2\theta\,d\theta\\"
+            r"\sqrt{4+9x^2} &= 2\sec\theta"
+            r"\end{aligned}"
+        )
+
+        # ∫ 1/√(4+9x²) dx = (1/3) ∫ secθ dθ
+        theta_integral_latex = (
+            r"\int \frac{1}{\sqrt{4+9x^2}}\,dx"
+            r" = \int \frac{\tfrac{2}{3}\sec^2\theta}{2\sec\theta}\,d\theta"
+            r" = \int \frac{1}{3}\sec\theta\,d\theta"
+            r" = \frac{1}{3}\ln\left|\sec\theta+\tan\theta\right|"
+        )
+
+        antiderivative_expr = log(3 * x + sqrt(4 + 9 * x**2)) / 3
+
+    # ===================== 3) Construimos setup + pasos =====================
+
     substitution = rf"{var_tex} = {latexize(substitution_expr)}"
-    differential = rf"d{var_tex} = {latexize(dx_theta)}\\,d{theta_tex}"
-    integrand_theta = simplify(example_integrand.subs(var, substitution_expr) * dx_theta)
-    theta_integral = latexize(integrand_theta)
-    theta_antiderivative = latexize(integrate(integrand_theta, theta))
-    antiderivative = integrate(example_integrand, var)
+    differential = rf"d{var_tex} = {latexize(dx_theta_expr)}\,d{theta_tex}"
+    root_theta_tex = latexize(root_theta_expr)
+    final_antiderivative_latex = format_antiderivative(antiderivative_expr, x)
 
     setup = [
-        {'label': 'Sustitución', 'value': substitution},
-        {'label': 'Diferencial', 'value': differential},
-        {'label': 'Inversa', 'value': inverse},
+        {"label": "Tabla trigonométrica clásica", "value": classical_table},
+        {"label": "Sustitución usada", "value": substitution},
+        {"label": "Diferencial", "value": differential},
+        {"label": "Raíz en función de θ", "value": root_theta_tex},
     ]
+
     steps = [
         build_step(
-            '1) Reconocemos el patrón cuadrático',
-            'La raíz identifica el uso de una identidad trigonométrica para eliminar la raíz.',
-            [make_integral_latex(example_integrand, var)],
+            "1) Reconocemos el patrón cuadrático",
+            "La raíz encaja en uno de los patrones clásicos de sustitución trigonométrica.",
+            [make_integral_latex(example_integrand, x)],
         ),
         build_step(
-            '2) Realizamos la sustitución angular',
-            r'Expresamos $x$ y $dx$ con $\\theta$ para simplificar la raíz.',
-            [substitution, differential],
+            "2) Planteamos la sustitución",
+            "Usamos la fila adecuada de la tabla y escribimos x, dx y la raíz en términos de θ.",
+            [classical_table, substitution, differential, root_theta_tex],
         ),
         build_step(
-            r'3) Integramos en $\\theta$',
-            'Resolvemos la integral elemental resultante y simplificamos.',
-            [rf"\int {theta_integral}\\,d\\theta = {theta_antiderivative}"],
+            r"3) Integramos en $\theta$",
+            "Sustituimos en la integral y simplificamos hasta llegar a una integral conocida en θ.",
+            [theta_integral_latex],
         ),
         build_step(
-            '4) Retornamos a la variable $x$',
-            'Aplicamos la sustitución inversa para expresar el resultado final en términos de la variable original.',
-            [format_antiderivative(antiderivative, var)],
+            "4) Volvemos a la variable original",
+            "Usamos la relación trigonométrica para expresar el resultado final en función de x.",
+            [final_antiderivative_latex],
         ),
     ]
+
     return {
-        'example_integral': make_integral_latex(example_integrand, var),
-        'example_solution': format_antiderivative(antiderivative, var),
-        'setup': setup,
-        'steps': steps,
+        "example_integral": make_integral_latex(example_integrand, x),
+        "example_solution": final_antiderivative_latex,
+        "setup": setup,
+        "steps": steps,
     }
+
 
 
 def generate_partial_fractions_example(expr, var: Symbol):
-    _, denominator = fraction(expr)
-    denominator = factor(simplify(denominator))
+    A, B, C = symbols('A B C')
 
-    poly = denominator.as_poly(var)
-    factors_data: List[tuple] = []
+    numerator = 2*var**2 + 4*var + 6
+    denominator = (var - 1) * (var + 2) * (var + 3)
+    example_integrand = numerator / denominator
 
-    if poly is not None:
-        for factor_expr, multiplicity in poly.factor_list()[1]:
-            factor_poly = factor_expr.as_poly(var)
-            if factor_poly is None:
-                continue
-            deg = factor_poly.degree()
-            factors_data.append((factor_expr, multiplicity, deg))
+    # Descomposición propuesta
+    decomposition = A/(var - 1) + B/(var + 2) + C/(var + 3)
 
-    if not factors_data:
-        factors_data = [
-            (var - 2, 1, 1),
-            (var + 1, 1, 1),
-            (var**2 + 4, 1, 2),
-        ]
+    # Identidad de numeradores
+    rhs_raw = A*(var + 2)*(var + 3) + B*(var - 1)*(var + 3) + C*(var - 1)*(var + 2)
+    rhs_expanded = expand(rhs_raw)
 
-    # Denominador muy parecido (coeficientes perturbados)
-    perturbed_factors = []
-    for f_expr, mult, deg in factors_data:
-        if deg == 1:
-            # (x - a) -> (x - (a±))
-            coeffs = f_expr.as_poly(var).all_coeffs()  # [1, -a]
-            a = -coeffs[1]
-            try:
-                a = Integer(_perturb_int(int(a)))
-            except Exception:
-                pass
-            perturbed = (var - a)
-            perturbed_factors.extend([perturbed] * mult)
-        elif deg == 2:
-            # x^2 + p x + q -> variar p o q
-            coeffs = f_expr.as_poly(var).all_coeffs()  # [1, p, q]
-            p, q = coeffs[1], coeffs[2]
-            try:
-                p = Integer(_perturb_int(int(p)))
-            except Exception:
-                pass
-            try:
-                q = Integer(_perturb_int(int(q)))
-            except Exception:
-                pass
-            perturbed = var**2 + p*var + q
-            perturbed_factors.extend([perturbed] * mult)
-        else:
-            perturbed_factors.extend([f_expr] * mult)
+    # Coeficientes y sistema
+    eq1 = Eq(A + B + C, 2)
+    eq2 = Eq(5*A + 2*B + C, 4)
+    eq3 = Eq(6*A - 3*B - 2*C, 6)
 
-    denominator_example = factor(reduce(operator.mul, perturbed_factors, 1))
+    solutions = solve((eq1, eq2, eq3), (A, B, C), dict=True)
+    sol = solutions[0] if solutions else {A: Rational(3, 2), B: Rational(-1, 2), C: 1}
 
-    # Forma general de descomposición
-    coeff_iter = (Symbol(name) for name in ascii_uppercase if name.lower() != str(var).lower())
-    def next_symbol(index: int) -> Symbol:
-        try:
-            return next(coeff_iter)
-        except StopIteration:
-            return Symbol(f'c_{index}')
+    A_val = sol[A]
+    B_val = sol[B]
+    C_val = sol[C]
 
-    decomposition_terms = []
-    used_symbols: List[Symbol] = []
-
-    for factor_expr in perturbed_factors:
-        deg = factor_expr.as_poly(var).degree()
-        if deg == 1:
-            A = next_symbol(len(used_symbols))
-            decomposition_terms.append(A / factor_expr)
-            used_symbols.append(A)
-        else:
-            B = next_symbol(len(used_symbols))
-            C = next_symbol(len(used_symbols) + 1)
-            decomposition_terms.append((B*var + C) / factor_expr)
-            used_symbols.extend([B, C])
-
-    if not decomposition_terms:
-        A = Symbol('A')
-        decomposition_terms.append(A / (var - 1))
-        used_symbols.append(A)
-
-    decomposition_general = sum(decomposition_terms)
-
-    # Elegimos valores concretos "bonitos" para el ejemplo
-    value_pool = [Rational(3, 2), -1, Rational(5, 3), 2, Rational(-4, 3), 1]
-    chosen_values = {sym: value_pool[i % len(value_pool)] for i, sym in enumerate(used_symbols)}
-
-    example_integrand = simplify(decomposition_general.subs(chosen_values))
-    decomposition_specific = apart(example_integrand, var, full=True)
+    decomposition_specific = decomposition.subs({A: A_val, B: B_val, C: C_val})
     antiderivative = integrate(example_integrand, var)
 
-    # Igualación de numeradores
-    lhs = expand(decomposition_general * denominator_example)
-    rhs = expand(example_integrand * denominator_example)
-    lhs_poly = Poly(lhs, var)
-    rhs_poly = Poly(rhs, var)
-    lhs_coeffs = lhs_poly.all_coeffs()
-    rhs_coeffs = rhs_poly.all_coeffs()
-    pad_length = max(len(lhs_coeffs), len(rhs_coeffs))
+    # TEXTO / ECUACIONES PARA LOS PASOS
+    identidad_numeradores_1 = Eq(numerator, rhs_raw)
+    identidad_numeradores_2 = Eq(numerator, rhs_expanded)
 
-    def pad(coeffs, length):
-        return [0] * (length - len(coeffs)) + coeffs
-
-    lhs_coeffs = pad(lhs_coeffs, pad_length)
-    rhs_coeffs = pad(rhs_coeffs, pad_length)
-
-    equations = [
-        latexize(Eq(simplify(lhs_coeffs[i]), simplify(rhs_coeffs[i]))) for i in range(pad_length)
-    ]
-    system_latex = r'\begin{cases}' + r'\\'.join(equations) + r'\end{cases}'
-
-    solutions = solve(
-        [Eq(simplify(lhs_coeffs[i]), simplify(rhs_coeffs[i])) for i in range(pad_length)],
-        tuple(used_symbols),
-        dict=True,
+    sistema_latex = (
+        r"\begin{cases}"
+        + latexize(eq1) + r"\\"
+        + latexize(eq2) + r"\\"
+        + latexize(eq3) +
+        r"\end{cases}"
     )
-    solution = solutions[0] if solutions else chosen_values
-    assignments = [
-        latexize(Eq(sym, simplify(solution.get(sym, chosen_values[sym])))) for sym in used_symbols
-    ]
 
-    coeff_summary = r',\; '.join(
-        f"{latexize(sym)} = {latexize(simplify(solution.get(sym, chosen_values[sym])))}"
-        for sym in used_symbols
-    )
+    asignaciones = [
+        latexize(Eq(A, A_val)),
+        latexize(Eq(B, B_val)),
+        latexize(Eq(C, C_val)),
+    ]
 
     setup = [
-        {'label': 'Denominador factorizado (ejemplo)', 'value': latexize(denominator_example)},
-        {'label': 'Forma general', 'value': latexize(decomposition_general)},
-        {'label': 'Coeficientes hallados', 'value': coeff_summary},
+        {
+            'label': 'Denominador factorizado',
+            'value': latexize(denominator),
+        },
+        {
+            'label': 'Descomposición propuesta',
+            'value': latexize(decomposition),
+        },
     ]
+
     steps = [
         build_step(
-            '1) Factorizamos el denominador',
-            'Expresamos el denominador como producto de factores lineales y cuadráticos irreductibles.',
-            [latexize(denominator_example)],
-        ),
-        build_step(
-            '2) Proponemos la descomposición',
-            'Asignamos constantes a cada fracción elemental según su tipo.',
-            [latexize(decomposition_general)],
-        ),
-        build_step(
-            '3) Igualamos numeradores y resolvemos',
-            'Primero escribimos la identidad de numeradores y luego igualamos coeficientes para hallar A, B, C, D, Ax+B, Cx+D.',
+            '1) Planteamos la descomposición',
+            (
+                'Al tener tres factores lineales distintos en el denominador, '
+                'suponemos una combinación de fracciones simples con constantes '
+                '$A$, $B$ y $C$.'
+            ),
             [
-                latexize(Eq(lhs, rhs)),   # ← identidad completa de numeradores (nuevo)
-                system_latex,             # ← sistema por coeficientes
-                *assignments,             # ← valores obtenidos
+                latexize(
+                    Eq(
+                        example_integrand,
+                        decomposition
+                    )
+                )
             ],
         ),
         build_step(
+            '2) Multiplicamos por el denominador común',
+            (
+                'Multiplicamos ambos lados por $(x-1)(x+2)(x+3)$ para eliminar '
+                'los denominadores y obtener una identidad entre polinomios.'
+            ),
+            [
+                latexize(identidad_numeradores_1),
+                latexize(identidad_numeradores_2),
+            ],
+        ),
+        build_step(
+            '3) Igualamos coeficientes',
+            (
+                'Al comparar los coeficientes de $x^2$, $x$ y el término constante, '
+                'obtenemos un sistema lineal para $A$, $B$ y $C$.'
+            ),
+            [sistema_latex] + asignaciones,
+        ),
+        build_step(
             '4) Integramos término a término',
-            'Sustituimos los coeficientes hallados y sumamos las primitivas de cada término.',
-            [latexize(decomposition_specific), format_antiderivative(antiderivative, var)],
+            (
+                'Sustituimos los valores de $A$, $B$ y $C$ en la descomposición '
+                'y calculamos la antiderivada sumando las integrales básicas.'
+            ),
+            [
+                latexize(decomposition_specific),
+                format_antiderivative(antiderivative, var),
+            ],
         ),
     ]
+
     return {
         'example_integral': make_integral_latex(example_integrand, var),
         'example_solution': format_antiderivative(antiderivative, var),
         'setup': setup,
         'steps': steps,
     }
-
 
 def generate_repeated_factors_example(expr, var: Symbol):
-    _, denominator = fraction(expr)
-    factors = factor(denominator)
-    factor_terms = factors.as_ordered_factors() if factors != 0 else []
-    dominant = factor_terms[0] if factor_terms else (var - 1) ** 2
-    # (x-a)^m -> (x-(a±))^m
-    if dominant.is_Pow and dominant.base.as_poly(var) is not None:
-        base = dominant.base.as_poly(var)
-        a = -base.all_coeffs()[1]
-        try:
-            a = Integer(_perturb_int(int(a)))
-        except Exception:
-            pass
-        dominant = (var - a) ** int(dominant.exp)
+    A, B, C = symbols('A B C')
 
-    example_integrand = 1 / dominant
+    numerator = var**2 + 2*var + 3
+    denominator = (var - 1) * (var + 1)**2
+    example_integrand = numerator / denominator
+
+    # Descomposición estándar con factor repetido
+    decomposition = A/(var - 1) + B/(var + 1) + C/(var + 1)**2
+
+    # Identidad de numeradores
+    rhs_raw = A*(var + 1)**2 + B*(var - 1)*(var + 1) + C*(var - 1)
+    rhs_expanded = expand(rhs_raw)
+
+    # Sistema a partir de coeficientes
+    eq1 = Eq(A + B, 1)      # coef x^2
+    eq2 = Eq(2*A + C, 2)    # coef x
+    eq3 = Eq(A - B - C, 3)  # término independiente
+
+    solutions = solve((eq1, eq2, eq3), (A, B, C), dict=True)
+    sol = solutions[0] if solutions else {A: Rational(3, 2), B: Rational(-1, 2), C: -1}
+
+    A_val = sol[A]
+    B_val = sol[B]
+    C_val = sol[C]
+
+    decomposition_specific = decomposition.subs({A: A_val, B: B_val, C: C_val})
     antiderivative = integrate(example_integrand, var)
-    decomposition = apart(example_integrand, var, full=True)
-    setup = [
-        {'label': 'Factor repetido', 'value': latexize(dominant)},
-        {'label': 'Descomposición', 'value': latexize(decomposition)},
+
+    identidad_numeradores_1 = Eq(numerator, rhs_raw)
+    identidad_numeradores_2 = Eq(numerator, rhs_expanded)
+
+    sistema_latex = (
+        r"\begin{cases}"
+        + latexize(eq1) + r"\\"
+        + latexize(eq2) + r"\\"
+        + latexize(eq3) +
+        r"\end{cases}"
+    )
+
+    asignaciones = [
+        latexize(Eq(A, A_val)),
+        latexize(Eq(B, B_val)),
+        latexize(Eq(C, C_val)),
     ]
+
+    setup = [
+        {
+            'label': 'Denominador factorizado con factor repetido',
+            'value': latexize(denominator),
+        },
+        {
+            'label': 'Descomposición propuesta',
+            'value': latexize(decomposition),
+        },
+    ]
+
     steps = [
         build_step(
-            '1) Aislamos el factor repetido',
-            'Identificamos el factor dominante y preparamos términos para cada potencia.',
-            [latexize(dominant)],
+            '1) Reconocemos el factor repetido',
+            (
+                'El denominador tiene $(x+1)^2$; por ello, en la descomposición '
+                'aparece un término con $(x+1)$ y otro con $(x+1)^2$.'
+            ),
+            [
+                latexize(
+                    Eq(
+                        example_integrand,
+                        decomposition
+                    )
+                )
+            ],
         ),
         build_step(
-            '2) Asignamos fracciones parciales escalonadas',
-            'Cada potencia genera una fracción con numeradores constantes a determinar.',
-            [latexize(decomposition)],
+            '2) Multiplicamos por el denominador común',
+            (
+                'Multiplicamos ambos lados por $(x-1)(x+1)^2$ para eliminar '
+                'los denominadores y obtener una igualdad entre polinomios.'
+            ),
+            [
+                latexize(identidad_numeradores_1),
+                latexize(identidad_numeradores_2),
+            ],
         ),
         build_step(
-            '3) Integramos sumando cada contribución',
-            'Aparecen potencias y logaritmos según la potencia del factor.',
-            [format_antiderivative(antiderivative, var)],
+            '3) Igualamos coeficientes',
+            (
+                'Agrupamos los términos en $x^2$, $x$ y constantes y formamos '
+                'un sistema de tres ecuaciones para $A$, $B$ y $C$.'
+            ),
+            [sistema_latex] + asignaciones,
+        ),
+        build_step(
+            '4) Integramos cada término',
+            (
+                'Sustituimos los valores hallados de $A$, $B$ y $C$ y calculamos '
+                'las integrales tipo logaritmo y potencia que aparecen.'
+            ),
+            [
+                latexize(decomposition_specific),
+                format_antiderivative(antiderivative, var),
+            ],
         ),
     ]
+
     return {
         'example_integral': make_integral_latex(example_integrand, var),
         'example_solution': format_antiderivative(antiderivative, var),
         'setup': setup,
         'steps': steps,
     }
-
-
 def generate_default_example(var: Symbol):
+    # Ejemplo sencillo: polinomio
     example_integrand = var**2 + 2 * var + 3
-    antiderivative = integrate(example_integrand, var)
+
+    # Antiderivada y la dejamos en forma expandida
+    antiderivative = expand(integrate(example_integrand, var))
+
+    # Integral separada en términos independientes (para que coincida con el texto)
+    separated_integral = (
+        r"\int x^2\,dx \;+\; \int 2x\,dx \;+\; \int 3\,dx"
+    )
+
     steps = [
         build_step(
             '1) Separar en sumas manejables',
             'Dividimos la integral en términos independientes.',
-            [latexize(example_integrand)],
+            [
+                latexize(example_integrand),   # x^2 + 2x + 3
+                separated_integral,            # ∫x^2 dx + ∫2x dx + ∫3 dx
+            ],
         ),
         build_step(
             '2) Aplicar reglas básicas',
-            r'Integramos cada potencia usando la regla $\int x^{n}\,dx = x^{n+1}/(n+1)$.',
-            [format_antiderivative(antiderivative, var)],
+            r'Integramos cada potencia usando la regla '
+            r'$\int x^{n}\,dx = \dfrac{x^{n+1}}{n+1}$.',
+            [
+                format_antiderivative(antiderivative, var),  # x^3/3 + x^2 + 3x + c
+            ],
         ),
     ]
+
     return {
         'example_integral': make_integral_latex(example_integrand, var),
         'example_solution': format_antiderivative(antiderivative, var),
@@ -888,7 +1403,14 @@ def describe_features(expr, var: Symbol) -> List[str]:
         features.append(r'Incluye exponenciales $e^{x}$ u $\exp(x)$.')
     if expr.has(sin) or expr.has(cos) or expr.has(tan) or expr.has(cot) or expr.has(sec) or expr.has(csc):
         features.append('Contiene funciones trigonométricas.')
-    if expr.has(sqrt):
+    # raíces cuadradas como sqrt(...) o potencias 1/2 / -1/2
+    has_root = bool(expr.has(sqrt))
+    if not has_root:
+        for term in expr.atoms(Pow):
+            if term.exp == Rational(1, 2) or term.exp == Rational(-1, 2):
+                has_root = True
+                break
+    if has_root:
         features.append('Incluye raíces cuadradas que podrían simplificarse con sustitución trigonométrica.')
     if expr.has(var) and expr.is_Mul:
         features.append('Producto de factores con la variable principal.')
@@ -896,33 +1418,110 @@ def describe_features(expr, var: Symbol) -> List[str]:
 
 
 def is_transcendental_factor(expr, var: Symbol) -> bool:
+    """
+    Devuelve True si el factor tiene funciones trascendentales 'clásicas'
+    (trig, exp, log...). Las raíces sqrt NO las marcamos como trascendentales
+    para evitar mandar cosas como x^3*sqrt(x^2-1) a integración por partes.
+    """
     transcendental_funcs = (sin, cos, tan, cot, sec, csc, sinh, cosh, tanh, exp, log)
-    return any(expr.has(func) for func in transcendental_funcs) or expr.has(sqrt)
+    return any(expr.has(func) for func in transcendental_funcs)
+
 
 
 def indicates_parts(expr, var: Symbol) -> bool:
-    # Casos clásicos: x*exp(ax), x*sin(bx), x*cos(bx), x*log(x), etc.
+    """
+    Detecta integrales que realmente conviene hacer por partes.
+    Evita marcar como 'partes' casos típicos de sustitución como
+    2x*exp(x^2), x*cos(x^2), etc.
+    """
+    # Casos clásicos: ln(x), asin(x), acos(x), atan(x)
     single_argument_funcs = (log, asin, acos, atan)
     if expr.func in single_argument_funcs and len(expr.args) == 1 and expr.args[0] == var:
         return True
+
+    # Casos como ln(g(x)) "suelto"
     if expr.has(log) and not expr.is_Mul and expr.as_poly(var) is None:
         return True
 
+    # 🔥 NUEVO BLOQUE:
+    # productos tipo ln(x) * x^n (incluye n negativo), por ejemplo ln(x)/x^2
+    if expr.has(log(var)):
+        for factor in expr.as_ordered_factors():
+            # x, x^n o x^(-n)
+            if factor == var:
+                return True
+            if factor.is_Pow and factor.base == var:
+                return True
+
+    # ---------------- resto igual que antes ----------------
     terms = expr.as_ordered_terms()
     for term in terms:
         factors = term.as_ordered_factors()
         if len(factors) < 2:
             continue
-        poly_like = any((factor.as_poly(var) is not None and factor.as_poly(var).degree() >= 1)
-                        for factor in factors if factor.has(var))
+
+        # ¿Hay un polinomio de grado >= 1?
+        poly_like = any(
+            (factor.as_poly(var) is not None and factor.as_poly(var).degree() >= 1)
+            for factor in factors
+            if factor.has(var)
+        )
+
+        # ¿Hay una parte trascendental?
         transc_like = any(is_transcendental_factor(factor, var) for factor in factors)
-        if poly_like and transc_like:
-            return True
+
+        if not (poly_like and transc_like):
+            continue
+
+        # Filtro: si la parte trascendental es f(g(x)) con g(x) de grado >= 2
+        # (ej: exp(x^2), sin(x^3), ...), mejor sustitución simple.
+        high_degree_inner = False
+        for factor in factors:
+            if factor.is_Function and factor.args:
+                inner = factor.args[0]
+                poly_inner = inner.as_poly(var)
+                if poly_inner is not None and poly_inner.degree() >= 2:
+                    high_degree_inner = True
+                    break
+        if high_degree_inner:
+            continue
+
+        # Buen candidato a partes: P(x)*sin(bx), P(x)*exp(ax), etc.
+        return True
+
     return False
 
-
 def indicates_substitution(expr, var: Symbol) -> bool:
-    composite_candidates = expr.atoms(exp, log, sin, cos, tan, cot, sec, csc, sinh, cosh, tanh, sqrt)
+    from sympy import fraction, sqrt, Add
+
+    # --- 0) Caso especial: constante / (a + sqrt(x)) ---
+    #
+    # Ejemplo típico: 3/(4 + sqrt(x))
+    # Didácticamente se hace con u = 4 + sqrt(x).
+    try:
+        num, den = fraction(expr)
+        num = simplify(num)
+        den = simplify(den)
+    except Exception:
+        num, den = None, None
+
+    if num is not None and den is not None:
+        # numerador constante (respecto a la variable de integración)
+        if not num.has(var):
+            a = Wild('a', exclude=[var])
+            c = Wild('c', exclude=[var])
+
+            # patrón a + c*sqrt(x)
+            pattern1 = a + c*sqrt(var)
+            pattern2 = c*sqrt(var) + a  # por si el orden es distinto
+
+            if den.match(pattern1) or den.match(pattern2):
+                return True
+
+    # --- 1) Funciones compuestas: exp(g), log(g), sin(g), cos(g), sqrt(g), etc. ---
+    composite_candidates = expr.atoms(
+        exp, log, sin, cos, tan, cot, sec, csc, sinh, cosh, tanh, sqrt
+    )
     for func_expr in composite_candidates:
         if not func_expr.args:
             continue
@@ -934,17 +1533,51 @@ def indicates_substitution(expr, var: Symbol) -> bool:
             ratio = simplify(expr / derivative)
         except Exception:
             continue
+        # Mismo patrón f(g(x)) * g'(x)
         if ratio.has(func_expr):
             return True
         if expr.has(derivative) and expr.has(func_expr):
             return True
+
+    # --- 2) Potencias algebraicas: g'(x) * (g(x))^n (ej: x^2 (2x^3-5)^4) ---
     power_candidates = [term for term in expr.atoms(Pow) if term.has(var)]
     for pow_expr in power_candidates:
         base = pow_expr.base
-        if base.has(var):
-            derivative = diff(base, var)
-            if derivative != 0 and expr.has(derivative):
-                return True
+        if not base.has(var):
+            continue
+
+        derivative = simplify(diff(base, var))
+        if derivative == 0:
+            continue
+
+        try:
+            ratio = simplify(expr / derivative)
+        except Exception:
+            continue
+
+        C = Wild('C', exclude=[base])
+        p = Wild('p')
+
+        match = ratio.match(C * base**p)
+        if not match:
+            continue
+
+        C_val = match[C]
+        if C_val is None:
+            continue
+
+        # C_val debe ser constante respecto a 'var'
+        try:
+            if hasattr(C_val, "is_constant") and not C_val.is_constant(var):
+                continue
+        except Exception:
+            if var in C_val.free_symbols:
+                continue
+
+        # Si llegamos aquí, hay patrón g'(x)*(g(x))^p → sustitución simple
+        return True
+
+    # --- 3) Caso racional clásico: (g'(x))/g(x) ---
     if expr.is_rational_function(var) and not expr.is_polynomial(var):
         numerator, denominator = fraction(expr)
         denominator = simplify(denominator)
@@ -969,8 +1602,27 @@ def indicates_substitution(expr, var: Symbol) -> bool:
                         return True
                 if simplify(ratio - 1 / denominator) == 0:
                     return True
-    return False
+        # 4) Casos tipo k/(a + x^(1/n)) con n = 2 o 3  → sustitución por raíz
+    radical_pows = [
+        p for p in expr.atoms(Pow)
+        if p.base == var and p.exp in (Rational(1, 2), Rational(1, 3))
+    ]
+    if radical_pows:
+        root = radical_pows[0]
+        K = Wild('K', exclude=[var])
+        a = Wild('a', exclude=[var])
 
+        simplified = simplify(expr)
+        match = simplified.match(K / (a + root)) or simplified.match(K / (root + a))
+        if match and match.get(K) is not None and match.get(a) is not None:
+            K_val = match[K]
+            a_val = match[a]
+            # Aseguramos que K y a sean constantes (no dependan de x)
+            if (not K_val.has(var)) and (not a_val.has(var)):
+                return True
+
+
+    return False
 
 def detect_rational_method(expr, var: Symbol) -> str | None:
     if not expr.is_rational_function(var) or expr.is_polynomial(var):
@@ -1012,27 +1664,92 @@ def detect_rational_method(expr, var: Symbol) -> str | None:
             return 'repeated_factors'
 
     return 'partial_fractions'
+def prefers_simple_sub_over_trig(expr, var: Symbol, inner):
+    """
+    Devuelve True solo si el integrando se ve como:
+        const * g'(x) * (g(x))**p
+    con g(x) = inner y 'const' realmente constante (no depende de x).
+    Eso detecta casos limpios de u–sustitución como:
+        2x*sqrt(x**2+1)
+        x/sqrt(4-x**2)
+    pero NO cosas como:
+        x^3*sqrt(x^2-1)
+        x^2*sqrt(2-x^2)
+    que son mejores para sustitución trigonométrica.
+    """
+    der = simplify(diff(inner, var))
+    if der == 0:
+        return False
+
+    try:
+        ratio = simplify(expr / der)
+    except Exception:
+        return False
+
+    C = Wild('C', exclude=[inner])
+    p = Wild('p')
+
+    match = ratio.match(C * inner**p)
+    if not match:
+        return False
+
+    C_val = match[C]
+    if C_val is None:
+        return False
+
+    # Pedimos que C_val sea CONSTANTE respecto a 'var'
+    try:
+        if hasattr(C_val, "is_constant"):
+            return bool(C_val.is_constant(var))
+    except Exception:
+        pass
+
+    # Fallback: que no aparezca la variable en los símbolos libres
+    return var not in C_val.free_symbols
 
 
 def detect_method(expr, var: Symbol) -> str:
-    if expr.has(sqrt):
-        for radicand in expr.atoms(sqrt):
-            inner = simplify(radicand.args[0])
-            description = describe_trig_substitution(inner, var)
-            if description:
-                return 'trig'
+    """
+    Decide el método predominante.
 
+    Reglas importantes:
+    - Si se detecta un patrón de raíz cuadrática tipo a^2 ± x^2 o x^2 ± a^2:
+        * Si además es un caso limpio de u–sustitución (derivada * una sola
+          potencia de ese interior) → usamos 'substitution'.
+        * En caso contrario → usamos 'trig'.
+    """
+
+    # 1) Miramos si hay patrón de raíz trigonométrica
+    trig_info = find_trig_pattern(expr, var)
+    if trig_info:
+        inner = trig_info['inner']
+
+        # ¿Se ve como g'(x) * (g(x))**p ? → preferimos sustitución simple
+        if prefers_simple_sub_over_trig(expr, var, inner):
+            return 'substitution'
+
+        # Si no es un caso "limpio" de u-sub, lo consideramos trigonométrica
+        return 'trig'
+
+    # 2) Por partes (casos clásicos tipo x*e^x, x*sin x, ln x, etc.)
     if indicates_parts(expr, var):
         return 'parts'
 
+    # 3) Racionales: fracciones parciales / sustitución / factores repetidos
     rational_method = detect_rational_method(expr, var)
     if rational_method:
         return rational_method
 
+    # 4) Sustitución simple (u–sustitución) en el resto de casos compuestos
     if indicates_substitution(expr, var):
         return 'substitution'
 
-    return 'substitution' if expr.has(exp, log, sin, cos, tan, cot, sec, csc, sinh, cosh, tanh, sqrt) else 'default'
+    # 5) Si hay funciones compuestas pero nada muy claro, probamos con sustitución simple
+    if expr.has(exp, log, sin, cos, tan, cot, sec, csc, sinh, cosh, tanh, sqrt):
+        return 'substitution'
+
+    # 6) Fallback completamente básico
+    return 'default'
 
 
 @app.route('/')

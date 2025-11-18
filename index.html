@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Calculadora Creativa de Integrales Indefinidas</title>
+  <title>Aplicacion web Creativa de Integrales Indefinidas</title>
   <link rel="stylesheet" href="styles.css">
   <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
   <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
@@ -12,7 +12,7 @@
   <header class="hero">
     <div class="hero-content">
       <h1>Calculadora Creativa de Integrales</h1>
-      <p>Escribe una integral <strong>indefinida</strong> y recibe la técnica de integración sugerida junto a un ejemplo muy parecido con desarrollo paso a paso en \(\LaTeX\).</p>
+      <p>Escribe una integral <strong>indefinida</strong> y recibe la técnica sugerida con ejemplo paso a paso.</p>
     </div>
   </header>
 
@@ -22,71 +22,77 @@
       <form id="integralForm">
         <div class="input-controls">
           <div class="field small">
-            <label for="variableInput">Variable principal</label>
-            <input id="variableInput" type="text" value="x" maxlength="5" autocomplete="off">
+            <label for="variableInput">Variable</label>
+            <input id="variableInput" type="text" value="x" maxlength="5">
           </div>
         </div>
 
-        <label for="mathField" class="sr-only">Integrando</label>
-        <div class="integral-editor" aria-label="Editor de integrales indefinidas">
+        <div class="integral-editor">
           <span class="integral-symbol">∫</span>
           <div class="input-wrapper">
-            <div id="mathField" class="latex-editor" aria-live="polite">
-              <textarea
-                id="mathInput"
-                class="latex-textarea"
-                aria-label="Escribe aquí tu integrando en notación LaTeX"
-                data-placeholder="(x^2+1)\\sin(x)"
+            <div id="mathField" class="latex-editor">
+              <textarea 
+                id="mathInput" 
+                class="latex-textarea" 
+                placeholder="x^2 + sin(x)" 
                 spellcheck="false"
+                data-placeholder="Escribe aquí tu integrando en formato LaTeX..."
               ></textarea>
             </div>
-            <div id="latexPreview" class="latex-preview" aria-live="polite"></div>
+            <div id="latexPreview" class="latex-preview">
+              <span class="preview-placeholder">Vista previa en LaTeX</span>
+            </div>
           </div>
-          <span class="differential" aria-hidden="true">d<span id="variableDisplay">x</span></span>
+          <span class="differential">d<span id="variableDisplay">x</span></span>
         </div>
 
-        <div class="keyboard" aria-label="Teclado matemático">
-          <div class="keyboard-tabs" id="keyboardTabs" role="tablist" aria-label="Categorías de símbolos matemáticos"></div>
+        <div class="keyboard">
+          <div class="keyboard-tabs" id="keyboardTabs"></div>
           <div class="keyboard-grid" id="keyboardGrid"></div>
         </div>
 
-        <div class="example-pills" aria-label="Ejemplos de integrales">
+        <div class="example-pills">
           <span>Ejemplos rápidos:</span>
           <div class="pill-group">
-            <button type="button" class="pill" data-latex="(x^{2}+1)*sin(x)">∫ \((x^{2}+1)\sin(x)\) dx</button>
-            <button type="button" class="pill" data-latex="x * e^{x}">∫ \(x e^{x}\) dx</button>
-            <button type="button" class="pill" data-latex="{1}/{\sqrt{1-x^{2}}}">∫ \(\frac{1}{\sqrt{1-x^{2}}}\) dx</button>
-            <button type="button" class="pill" data-latex="{2x+3}/{x^{2}+3x}">∫ \(\frac{2x+3}{x^{2}+3x}\) dx</button>
+            <button type="button" class="pill" data-latex="x^2 + 3x + 5">Polinomio</button>
+            <button type="button" class="pill" data-latex="(2x+3)/(x^3 + 3x)">Fracciones parciales</button>
+            <button type="button" class="pill" data-latex="2x e^{x^2}">Sustitución</button>
+            <button type="button" class="pill" data-latex="1/sqrt(1-x^2)">Trigonométrica</button>
+            <button type="button" class="pill" data-latex="x * cos(x)">Por partes</button>
           </div>
         </div>
 
-        <button type="submit" class="primary">Sugerir método</button>
+        <button type="submit" class="primary">Sugerir método y resolver</button>
       </form>
-      <p class="hint">Trabajamos únicamente con integrales indefinidas: la aplicación analiza el integrando que ingreses, sugiere la técnica de integración y muestra un ejemplo similar ya resuelto paso a paso para que sigas la misma estrategia.</p>
     </section>
 
-    <section class="result-panel" aria-live="polite">
-      <h2>Guía de estudio</h2>
-      <div id="statusMessage" class="status" role="status">Escribe un integrando para comenzar el análisis.</div>
-      <div id="analysisCard" class="method-card">
-        <h3>Análisis del integrando</h3>
-        <p>Detectaremos automáticamente la variable y las características relevantes del integrando.</p>
-      </div>
-      <div id="methodSuggestion" class="method-card">
-        <h3>Método sugerido</h3>
-        <p>Obtendrás un método recomendado con un ejemplo muy parecido y sus pasos clave en \(\LaTeX\).</p>
-      </div>
-      <div id="exampleCard" class="method-card example-card">
-        <h3>Ejemplo guiado</h3>
-        <p>Al analizar una integral verás aquí un ejemplo similar totalmente resuelto.</p>
+    <section class="result-panel">
+      <h2>Guía de estudio completa</h2>
+      
+      <div id="statusMessage" class="status idle">Escribe un integrando para comenzar.</div>
+
+      <!-- 1. Análisis del integrando -->
+      <div id="analysisCard" class="method-card"></div>
+
+      <!-- 2. Método sugerido (breve) -->
+      <div id="methodSuggestion" class="method-card"></div>
+
+      <!-- 3. Ejemplo guiado (parecido al tuyo) -->
+      <div id="exampleCard" class="method-card example-card"></div>
+
+      <!-- 4. ¡NUEVO! Resolución paso a paso de TU integral exacta -->
+      <div id="userCard" class="method-card user-resolution-card">
+        <h3>Resolución de tu integral</h3>
+        <p>Cargando resolución automática con SymPy...</p>
       </div>
     </section>
   </main>
 
   <footer>
-    <p>Desarrollado para inspirar el estudio creativo del cálculo integral.</p>
+    <p>Desarrollado y creado por Joel Báez y Manuel Davila</p>
   </footer>
 
+  <!-- app.js corregido y completo -->
   <script src="app.js" defer></script>
 </body>
 </html>

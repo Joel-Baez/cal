@@ -393,10 +393,13 @@ fieldset.field .option {
   min-height: 260px;
   justify-content: flex-start;
   overflow-wrap: anywhere;
-  max-height: clamp(320px, 65vh, 760px);
+
+  /* MÁS ALTO QUE ANTES */
+  max-height: clamp(520px, 80vh, 1200px);
   overflow-y: auto;
   padding-right: 2.25rem;
 }
+
 
 .method-card {
   scrollbar-width: thin;
@@ -576,9 +579,10 @@ fieldset.field .option {
 
 .example-card {
   gap: 1.1rem;
-  max-height: clamp(360px, 70vh, 820px);
+  max-height: clamp(720px, 90vh, 1600px);
   overflow-y: auto;
 }
+
 
 .setup {
   background: rgba(255, 255, 255, 0.06);
